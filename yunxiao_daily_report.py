@@ -15,13 +15,19 @@ from dotenv import load_dotenv
 # 加载环境变量配置文件
 load_dotenv()
 
-# 获取配置项
-YUNXIAO_PAT = os.getenv("YUNXIAO_PAT")
-YUNXIAO_ORG_ID = os.getenv("YUNXIAO_ORG_ID")
-YUNXIAO_PROJECT_ID = os.getenv("YUNXIAO_PROJECT_ID")
-DINGTALK_WEBHOOK = os.getenv("DINGTALK_WEBHOOK")
-DINGTALK_KEYWORD = os.getenv("DINGTALK_KEYWORD", "日报")
-DINGTALK_SECRET = os.getenv("DINGTALK_SECRET")
+# 获取并清理配置项（防止 GitHub Secrets 复制时多带了引号、空格或换行）
+def clean_env_var(name, default=None):
+    val = os.getenv(name)
+    if not val:
+        return default
+    return val.strip().strip('"').strip("'")
+
+YUNXIAO_PAT = clean_env_var("YUNXIAO_PAT")
+YUNXIAO_ORG_ID = clean_env_var("YUNXIAO_ORG_ID")
+YUNXIAO_PROJECT_ID = clean_env_var("YUNXIAO_PROJECT_ID")
+DINGTALK_WEBHOOK = clean_env_var("DINGTALK_WEBHOOK")
+DINGTALK_KEYWORD = clean_env_var("DINGTALK_KEYWORD", "日报")
+DINGTALK_SECRET = clean_env_var("DINGTALK_SECRET")
 
 # 检查必要参数
 if not all([YUNXIAO_PAT, YUNXIAO_ORG_ID, YUNXIAO_PROJECT_ID, DINGTALK_WEBHOOK]):

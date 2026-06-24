@@ -33,8 +33,10 @@ if not all([YUNXIAO_PAT, YUNXIAO_ORG_ID, YUNXIAO_PROJECT_ID, DINGTALK_WEBHOOK]):
     print(f"- DINGTALK_WEBHOOK: {'已设置' if DINGTALK_WEBHOOK else '未设置'}")
     sys.exit(1)
 
-# 初始化今日的起始时间戳（本地时区）
-local_today = datetime.date.today()
+# 初始化今日的起始时间（强制使用北京时间 UTC+8）
+utc_now = datetime.datetime.utcnow()
+beijing_now = utc_now + datetime.timedelta(hours=8)
+local_today = beijing_now.date()
 
 category_map = {
     'Req': '需求',

@@ -14,9 +14,9 @@
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>21</integer>
+        <integer>9</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>5</integer>
     </dict>
     <key>StandardOutPath</key>
     <string>/Users/scimall08/network/写作/组织树/daily_report_launchd.log</string>

@@ -1,0 +1,35 @@
+name: Yunxiao Daily Report
+
+on:
+  schedule:
+    # 每天北京时间 21:00 运行 (21:00 UTC+8 = 13:00 UTC)
+    - cron: '0 13 * * *'
+  workflow_dispatch: # 允许在 GitHub UI 中手动触发
+
+jobs:
+  run-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run daily report script
+        env:
+          YUNXIAO_PAT: ${{ secrets.YUNXIAO_PAT }}
+          YUNXIAO_ORG_ID: ${{ secrets.YUNXIAO_ORG_ID }}
+          YUNXIAO_PROJECT_ID: ${{ secrets.YUNXIAO_PROJECT_ID }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_KEYWORD: ${{ secrets.DINGTALK_KEYWORD }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+        run: python yunxiao_daily_report.py

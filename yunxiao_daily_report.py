@@ -216,20 +216,57 @@ def get_planned_dates(item):
                 end_date = parse_date_string(end_val)
     return start_date, end_date
 
+def get_status_on_date(item, target_date):
+    """根据目标日期，动态计算工作项在当时的合理状态"""
+    status_val = item.get("status")
+    status_name = status_val.get("name") if isinstance(status_val, dict) else str(status_val)
+    
+    if status_name == "已完成":
+        completion_date = get_status_update_date(item)
+        if completion_date:
+            if target_date == completion_date:
+                return "已完成"
+            elif target_date < completion_date:
+                # 目标日期在完成日期之前，说明当时尚未完成
+                # 根据计划开始时间来决定是"处理中"还是"待处理"
+                start_date, _ = get_planned_dates(item)
+                if start_date and target_date < start_date:
+                    return "待处理"
+                return "处理中"
+            else:
+                # 目标日期在完成日期之后
+                return "已完成"
+    return status_name
+
 def is_active_on_date(item, target_date):
     """判断工作项在目标日期是否处于活动（计划）范围"""
-    # 获取当前状态名称
     status_val = item.get("status")
-    if isinstance(status_val, dict):
-        status_name = status_val.get("name") or status_val.get("displayName") or str(status_val)
-    else:
-        status_name = str(status_val)
-        
-    # 规则 1: 如果当前是"已完成"，只有当其状态更新时间等于目标日期时，才列入当天工作中
+    status_name = status_val.get("name") if isinstance(status_val, dict) else str(status_val)
+    
     if status_name == "已完成":
+        completion_date = get_status_update_date(item)
+        if completion_date:
+            if target_date == completion_date:
+                return True
+            elif target_date < completion_date:
+                # 目标日期在完成日期之前，我们需要看计划范围
+                start_date, end_date = get_planned_dates(item)
+                if start_date or end_date:
+                    if start_date and end_date:
+                        return start_date <= target_date <= end_date
+                    elif start_date:
+                        return start_date <= target_date
+                    else:
+                        return target_date <= end_date
+                # 如果没有计划时间，则默认不在之前的日期活跃
+                return False
+            else:
+                # 目标日期在完成日期之后，已归档/不再活跃
+                return False
+        # 兜底：如果没有获取到完成时间，则按更新时间判断
         return is_status_updated_on_date(item, target_date)
         
-    # 规则 2: 如果当前是"待处理"或"处理中"等未完成状态，判断目标日期是否在计划开始和结束时间之间
+    # 如果当前是"待处理"或"处理中"等未完成状态，判断目标日期是否在计划开始和结束时间之间
     start_date, end_date = get_planned_dates(item)
     if start_date or end_date:
         if start_date and end_date:
@@ -239,7 +276,7 @@ def is_active_on_date(item, target_date):
         else:  # end_date
             return target_date <= end_date
             
-    # 规则 3: 如果未完成状态且既没有计划开始也没有计划结束，回退到判断目标日期是否有修改
+    # 如果未完成状态且既没有计划开始也没有计划结束，回退到判断目标日期是否有修改
     return is_modified_on_date(item.get("gmtModified"), target_date)
 
 def get_actual_hours(item):
@@ -294,17 +331,17 @@ def fetch_work_items():
     print(f"📊 项目中累计拉取到 {len(work_items)} 个工作项，准备进行今日更新时间筛选...")
     return work_items
 
-def build_markdown_report(grouped_items):
+def build_markdown_report(grouped_items, query_date):
     """根据分组好的工作项生成日报 Markdown 内容"""
-    today_str = local_today.strftime("%Y-%m-%d")
+    date_str = query_date.strftime("%Y-%m-%d")
     markdown_lines = [
-        f"### 📋 云效项目今日日报汇总 ({today_str})",
+        f"### 📋 云效项目今日日报汇总 ({date_str})",
         f"**项目ID**: `{YUNXIAO_PROJECT_ID}`",
         f"---"
     ]
     
     if not grouped_items:
-        markdown_lines.append("今日项目内没有工作项更新。")
+        markdown_lines.append("该日期项目内没有工作项更新。")
     else:
         for person, items in grouped_items.items():
             in_progress = []
@@ -315,12 +352,8 @@ def build_markdown_report(grouped_items):
             for it in items:
                 subject = it.get("subject", "无标题")
                 
-                # 解析状态名称
-                status_val = it.get("status")
-                if isinstance(status_val, dict):
-                    status_name = status_val.get("name") or status_val.get("displayName") or str(status_val)
-                else:
-                    status_name = str(status_val)
+                # 解析目标日期的状态名称
+                status_name = get_status_on_date(it, query_date)
                 
                 # 获取工时
                 hours = get_actual_hours(it)
@@ -396,7 +429,15 @@ def send_to_dingtalk(text_content):
 
 
 def main():
-    print(f"⏰ 开始执行日报统计任务, 当前日期: {local_today.strftime('%Y-%m-%d')}")
+    target_date = local_today
+    if len(sys.argv) > 1:
+        try:
+            target_date = datetime.datetime.strptime(sys.argv[1], "%Y-%m-%d").date()
+            print(f"📌 使用命令行参数指定的日期: {target_date.strftime('%Y-%m-%d')}")
+        except Exception:
+            print(f"⚠️ 无效的日期参数: {sys.argv[1]}，将默认使用今日日期: {local_today.strftime('%Y-%m-%d')}")
+            
+    print(f"⏰ 开始执行日报统计任务, 目标日期: {target_date.strftime('%Y-%m-%d')}")
     
     # 1. 获取所有的工作项
     all_items = fetch_work_items()
@@ -406,7 +447,7 @@ def main():
     filtered_count = 0
     
     for item in all_items:
-        if not is_active_on_date(item, local_today):
+        if not is_active_on_date(item, target_date):
             continue
             
         filtered_count += 1
@@ -422,10 +463,10 @@ def main():
             grouped_items[assignee_name] = []
         grouped_items[assignee_name].append(item)
         
-    print(f"🔍 筛选出今日 ({local_today.strftime('%Y-%m-%d')}) 有更新的工作项共 {filtered_count} 个")
+    print(f"🔍 筛选出目标日期 ({target_date.strftime('%Y-%m-%d')}) 有更新的工作项共 {filtered_count} 个")
     
     # 3. 生成日报 Markdown 内容
-    markdown_content = build_markdown_report(grouped_items)
+    markdown_content = build_markdown_report(grouped_items, target_date)
     
     # 4. 模拟推送至钉钉群
     send_to_dingtalk(markdown_content)

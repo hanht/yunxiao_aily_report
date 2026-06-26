@@ -2,8 +2,8 @@ name: Yunxiao Daily Report
 
 on:
   schedule:
-    # 每天北京时间 19:45 运行 (19:45 UTC+8 = 11:45 UTC)
-    - cron: '45 11 * * *'
+    # 每天北京时间 17:17 运行 (17:17 UTC+8 = 09:17 UTC)
+    - cron: '17 9 * * *'
   workflow_dispatch: # 允许在 GitHub UI 中手动触发
 
 jobs:

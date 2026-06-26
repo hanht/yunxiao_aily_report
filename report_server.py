@@ -987,7 +987,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <div class="glass-card empty-state">
                     <div class="empty-icon">📂</div>
                     <h3>请选择日期并点击“查询数据”进行查询</h3>
-                    <p style="color: var(--text-muted); font-size: 13px;">默认已为您选中了前天。</p>
+                    <p style="color: var(--text-muted); font-size: 13px;">默认已为您选中了今天。</p>
                 </div>
             </section>
 
@@ -1032,9 +1032,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             return `${y}-${m}-${d}`;
         }
 
-        // 初始化日期：默认选择“前天”（偏移 2 天）
+        // 初始化日期：默认选择“今天”（偏移 0 天）
         const dateInput = document.getElementById('date-select');
-        const defaultDate = getFormattedDate(2);
+        const defaultDate = getFormattedDate(0);
         dateInput.value = defaultDate;
         
         // 绑定状态
@@ -1075,8 +1075,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             queryData();
         });
 
-        // 页面初始化时，高亮显示“前天”按钮，并自动加载数据
-        btnBeforeYesterday.classList.add('active');
+        // 页面初始化时，高亮显示“今天”按钮，并自动加载数据
+        btnToday.classList.add('active');
 
         // Toast 消息
         function showToast(msg, isSuccess = true) {

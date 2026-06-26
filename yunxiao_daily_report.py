@@ -90,6 +90,46 @@ def is_status_updated_on_date(item, target_date):
     """判断状态更新时间是否为指定日期"""
     return is_timestamp_on_date(item.get("updateStatusAt"), target_date)
 
+def get_status_update_date(item):
+    """获取状态更新的日期"""
+    val = item.get("updateStatusAt")
+    if not val:
+        return None
+    if isinstance(val, (int, float)):
+        ts = val / 1000.0
+    elif isinstance(val, str) and val.isdigit():
+        ts = int(val) / 1000.0
+    else:
+        try:
+            clean_str = val.replace('T', ' ').replace('Z', '')
+            if '.' in clean_str:
+                clean_str = clean_str.split('.')[0]
+            dt = datetime.datetime.strptime(clean_str.strip(), "%Y-%m-%d %H:%M:%S")
+            if 'Z' in val:
+                dt = dt + datetime.timedelta(hours=8)
+            return dt.date()
+        except Exception:
+            return None
+    try:
+        return datetime.datetime.fromtimestamp(ts).date()
+    except Exception:
+        return None
+
+def get_virtual_status(item, target_date):
+    """计算目标日期的虚拟状态"""
+    status_val = item.get("status")
+    if isinstance(status_val, dict):
+        status_name = status_val.get("name") or status_val.get("displayName") or str(status_val)
+    else:
+        status_name = str(status_val)
+        
+    if status_name == "已完成":
+        completed_date = get_status_update_date(item)
+        if completed_date and completed_date > target_date:
+            return "处理中"
+            
+    return status_name
+
 def is_modified_today(gmt_modified):
     """判断修改时间是否为今天"""
     return is_modified_on_date(gmt_modified, local_today)
@@ -139,10 +179,18 @@ def is_active_on_date(item, target_date):
     else:
         status_name = str(status_val)
         
-    # 如果已完成，我们只在状态更新时间为目标日期时展示它，避免展示以前完成的历史任务
+    # 如果已完成，根据实际完成日期来决定它在目标日期的活跃度
     if status_name == "已完成":
-        return is_status_updated_on_date(item, target_date)
-        
+        completed_date = get_status_update_date(item)
+        if completed_date:
+            if completed_date == target_date:
+                return True
+            elif completed_date < target_date:
+                return False
+            # 如果 completed_date > target_date，说明目标日期它还没完成，继续往下由计划起止时间来判断是否活跃
+        else:
+            return is_status_updated_on_date(item, target_date)
+            
     # 如果是待处理或处理中，使用计划时间判断
     if start_date or end_date:
         if start_date and end_date:
@@ -229,11 +277,7 @@ def build_markdown_report(grouped_items):
                 subject = it.get("subject", "无标题")
                 
                 # 解析状态名称
-                status_val = it.get("status")
-                if isinstance(status_val, dict):
-                    status_name = status_val.get("name") or status_val.get("displayName") or str(status_val)
-                else:
-                    status_name = str(status_val)
+                status_name = get_virtual_status(it, local_today)
                 
                 # 获取工时
                 hours = get_actual_hours(it)

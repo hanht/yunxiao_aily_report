@@ -141,45 +141,21 @@ def get_status_update_date(item):
     except Exception:
         return None
 
-def get_virtual_status(item, target_date):
-    """计算目标日期的虚拟状态"""
-    status_val = item.get("status")
-    if isinstance(status_val, dict):
-        status_name = status_val.get("name") or status_val.get("displayName") or str(status_val)
-    else:
-        status_name = str(status_val)
-        
-    if status_name == "已完成":
-        completed_date = get_status_update_date(item)
-        if completed_date and completed_date > target_date:
-            return "处理中"
-            
-    return status_name
-
 def is_active_on_date(item, target_date):
     """判断工作项在目标日期是否处于活动（计划）范围"""
-    start_date, end_date = get_planned_dates(item)
-    
-    # 获取状态名称
+    # 获取当前状态名称
     status_val = item.get("status")
     if isinstance(status_val, dict):
         status_name = status_val.get("name") or status_val.get("displayName") or str(status_val)
     else:
         status_name = str(status_val)
         
-    # 如果已完成，根据实际完成日期来决定它在目标日期的活跃度
+    # 规则 1: 如果当前是"已完成"，只有当其状态更新时间等于目标日期时，才列入当天工作中
     if status_name == "已完成":
-        completed_date = get_status_update_date(item)
-        if completed_date:
-            if completed_date == target_date:
-                return True
-            elif completed_date < target_date:
-                return False
-            # 如果 completed_date > target_date，说明目标日期它还没完成，继续往下由计划起止时间来判断是否活跃
-        else:
-            return is_status_updated_on_date(item, target_date)
-            
-    # 如果是待处理或处理中，使用计划时间判断
+        return is_status_updated_on_date(item, target_date)
+        
+    # 规则 2: 如果当前是"待处理"或"处理中"等未完成状态，判断目标日期是否在计划开始和结束时间之间
+    start_date, end_date = get_planned_dates(item)
     if start_date or end_date:
         if start_date and end_date:
             return start_date <= target_date <= end_date
@@ -188,7 +164,7 @@ def is_active_on_date(item, target_date):
         else:  # end_date
             return target_date <= end_date
             
-    # 如果既没有计划开始也没有计划结束，回退到判断目标日期是否有修改
+    # 规则 3: 如果未完成状态且既没有计划开始也没有计划结束，回退到判断目标日期是否有修改
     return is_modified_on_date(item.get("gmtModified"), target_date)
 
 def get_actual_hours(item):
@@ -1312,7 +1288,11 @@ class DashboardHTTPRequestHandler(BaseHTTPRequestHandler):
                     category = item.get("category")
                     category_zh = category_map.get(category, category or "工作项")
                     
-                    status_name = get_virtual_status(item, target_date)
+                    status_val = item.get("status")
+                    if isinstance(status_val, dict):
+                        status_name = status_val.get("name") or status_val.get("displayName") or str(status_val)
+                    else:
+                        status_name = str(status_val)
                         
                     grouped_items[assignee_name].append({
                         "subject": item.get("subject", "无标题"),

@@ -50,8 +50,8 @@ category_map = {
     'Bug': '缺陷'
 }
 
-def is_modified_today(gmt_modified):
-    """判断修改时间是否为今天"""
+def is_modified_on_date(gmt_modified, target_date):
+    """判断修改时间是否为指定日期"""
     if not gmt_modified:
         return False
     
@@ -70,17 +70,82 @@ def is_modified_today(gmt_modified):
             if 'Z' in gmt_modified:
                 # UTC 转东八区
                 dt = dt + datetime.timedelta(hours=8)
-            return dt.date() == local_today
+            return dt.date() == target_date
         except Exception as e:
             print(f"⚠️ 解析日期格式失败: {gmt_modified}, 错误: {e}")
             return False
             
     try:
         dt = datetime.datetime.fromtimestamp(ts)
-        return dt.date() == local_today
+        return dt.date() == target_date
     except Exception as e:
         print(f"⚠️ 转换时间戳失败: {ts}, 错误: {e}")
         return False
+
+def is_modified_today(gmt_modified):
+    """判断修改时间是否为今天"""
+    return is_modified_on_date(gmt_modified, local_today)
+
+def parse_date_string(date_str):
+    """解析日期字符串为 date 对象"""
+    if not date_str:
+        return None
+    try:
+        clean_str = date_str.strip()
+        if ' ' in clean_str:
+            clean_str = clean_str.split(' ')[0]
+        elif 'T' in clean_str:
+            clean_str = clean_str.split('T')[0]
+        return datetime.datetime.strptime(clean_str, "%Y-%m-%d").date()
+    except Exception as e:
+        print(f"⚠️ 解析计划日期失败: {date_str}, 错误: {e}")
+        return None
+
+def get_planned_dates(item):
+    """提取计划开始时间(fieldId: 79)和计划完成时间(fieldId: 80)"""
+    start_date = None
+    end_date = None
+    for cf in item.get("customFieldValues", []):
+        field_id = cf.get("fieldId")
+        field_name = cf.get("fieldName")
+        if field_id == "79" or field_name == "计划开始时间":
+            values = cf.get("values", [])
+            if values:
+                start_val = values[0].get("displayValue") or values[0].get("value") or values[0].get("identifier")
+                start_date = parse_date_string(start_val)
+        elif field_id == "80" or field_name == "计划完成时间":
+            values = cf.get("values", [])
+            if values:
+                end_val = values[0].get("displayValue") or values[0].get("value") or values[0].get("identifier")
+                end_date = parse_date_string(end_val)
+    return start_date, end_date
+
+def is_active_on_date(item, target_date):
+    """判断工作项在目标日期是否处于活动（计划）范围"""
+    start_date, end_date = get_planned_dates(item)
+    
+    # 获取状态名称
+    status_val = item.get("status")
+    if isinstance(status_val, dict):
+        status_name = status_val.get("name") or status_val.get("displayName") or str(status_val)
+    else:
+        status_name = str(status_val)
+        
+    # 如果已完成，我们只在当天修改/完成时展示它，避免展示以前完成的历史任务
+    if status_name == "已完成":
+        return is_modified_on_date(item.get("gmtModified"), target_date)
+        
+    # 如果是待处理或处理中，使用计划时间判断
+    if start_date or end_date:
+        if start_date and end_date:
+            return start_date <= target_date <= end_date
+        elif start_date:
+            return start_date <= target_date
+        else:  # end_date
+            return target_date <= end_date
+            
+    # 如果既没有计划开始也没有计划结束，回退到判断目标日期是否有修改
+    return is_modified_on_date(item.get("gmtModified"), target_date)
 
 def get_actual_hours(item):
     """从工作项自定义字段中提取实际工时"""
@@ -147,8 +212,9 @@ def build_markdown_report(grouped_items):
         markdown_lines.append("今日项目内没有工作项更新。")
     else:
         for person, items in grouped_items.items():
-            today_progress = []
-            next_steps = []
+            in_progress = []
+            todo = []
+            completed = []
             person_total_hours = 0.0
             
             for it in items:
@@ -167,32 +233,31 @@ def build_markdown_report(grouped_items):
                 
                 # 格式化工时显示
                 hours_str = f", 工时: {hours}h" if hours > 0 else ""
-                
-                # 工作项详情 bullet point（去掉“(状态: 已完成)”中的“状态:”，改成“(已完成)”)
                 bullet = f"- {subject} ({status_name}{hours_str})"
                 
-                # 将处理中和已完成的，列为今日进展；待处理的列为下一步工作内容
-                if status_name in ["处理中", "已完成"]:
-                    today_progress.append(bullet)
-                elif status_name in ["待处理"]:
-                    next_steps.append(bullet)
+                if status_name == "已完成":
+                    completed.append(bullet)
+                elif status_name == "待处理":
+                    todo.append(bullet)
                 else:
-                    # 默认将其他非待处理的状态归入今日进展
-                    today_progress.append(bullet)
+                    in_progress.append(bullet)
             
             # 拼接该成员段落
             hours_header = f" (今日工时: {person_total_hours}h)" if person_total_hours > 0 else ""
             markdown_lines.append(f"\n👤 **{person}**{hours_header}")
             
-            if today_progress:
-                markdown_lines.append("  *   **今日进展**：")
-                for p in today_progress:
+            if in_progress:
+                markdown_lines.append("  *   **处理中**：")
+                for p in in_progress:
                     markdown_lines.append(f"      {p}")
-                    
-            if next_steps:
-                markdown_lines.append("  *   **下一步工作内容**：")
-                for s in next_steps:
-                    markdown_lines.append(f"      {s}")
+            if todo:
+                markdown_lines.append("  *   **待处理**：")
+                for t in todo:
+                    markdown_lines.append(f"      {t}")
+            if completed:
+                markdown_lines.append("  *   **已完成**：")
+                for c in completed:
+                    markdown_lines.append(f"      {c}")
                 
     # 强制包含机器人设定的“自定义关键词”，保证发送成功
     content = "\n".join(markdown_lines)
@@ -241,13 +306,12 @@ def main():
     # 1. 获取所有的工作项
     all_items = fetch_work_items()
     
-    # 2. 筛选今日有更新的工作项并进行人员分组
+    # 2. 筛选今日计划活跃的工作项并进行人员分组
     grouped_items = {}
     filtered_count = 0
     
     for item in all_items:
-        gmt_modified = item.get("gmtModified")
-        if not is_modified_today(gmt_modified):
+        if not is_active_on_date(item, local_today):
             continue
             
         filtered_count += 1

@@ -351,12 +351,8 @@ def build_markdown_report(grouped_items, query_date):
             
             for it in items:
                 subject = it.get("subject", "无标题")
-                
-                # 解析目标日期的状态名称
-                status_name = get_status_on_date(it, query_date)
-                
-                # 获取工时
-                hours = get_actual_hours(it)
+                status_name = it.get("status")
+                hours = it.get("hours", 0.0)
                 person_total_hours += hours
                 
                 # 格式化工时显示
@@ -442,33 +438,112 @@ def main():
     # 1. 获取所有的工作项
     all_items = fetch_work_items()
     
-    # 2. 筛选今日计划活跃的工作项并进行人员分组
-    grouped_items = {}
-    filtered_count = 0
-    
+    # 2. 筛选在目标日期活跃的工作项
+    active_items = []
     for item in all_items:
-        if not is_active_on_date(item, target_date):
-            continue
+        if is_active_on_date(item, target_date):
+            active_items.append(item)
             
-        filtered_count += 1
-        
-        # 寻找对应的姓名 (直接从 assignedTo 对象获取)
-        assigned_to = item.get("assignedTo")
-        if isinstance(assigned_to, dict):
-            assignee_name = assigned_to.get("name") or "未指派"
-        else:
-            assignee_name = "未指派"
+    # 3. 并行获取这些活跃工作项的工时日志
+    effort_records_map = {}
+    if active_items:
+        headers = {
+            "x-yunxiao-token": YUNXIAO_PAT,
+            "Content-Type": "application/json"
+        }
+        import concurrent.futures
+        def fetch_records(item_id):
+            u = f"https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/{YUNXIAO_ORG_ID}/workitems/{item_id}/effortRecords"
+            try:
+                r = requests.get(u, headers=headers, timeout=10)
+                if r.status_code == 200:
+                    return item_id, r.json()
+            except Exception:
+                pass
+            return item_id, []
             
-        if assignee_name not in grouped_items:
-            grouped_items[assignee_name] = []
-        grouped_items[assignee_name].append(item)
-        
-    print(f"🔍 筛选出目标日期 ({target_date.strftime('%Y-%m-%d')}) 有更新的工作项共 {filtered_count} 个")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+            futures = [executor.submit(fetch_records, item["id"]) for item in active_items]
+            effort_records_map = dict(f.result() for f in concurrent.futures.as_completed(futures))
+            
+    # 4. 根据实际录入的工时或指派人进行人员分组
+    grouped_items = {}
+    total_hours = 0.0
     
-    # 3. 生成日报 Markdown 内容
+    for item in active_items:
+        item_id = item["id"]
+        subject = item.get("subject", "无标题")
+        status_name = get_status_on_date(item, target_date)
+        
+        # 提取当前类别名
+        category = item.get("category")
+        category_zh = category_map.get(category, category or "工作项")
+        
+        # 查找当天登记的工时记录
+        records = effort_records_map.get(item_id, [])
+        day_records = []
+        for rec in records:
+            gmt_start = rec.get("gmtStart")
+            if gmt_start:
+                rec_date = datetime.datetime.fromtimestamp(gmt_start / 1000.0).date()
+                if rec_date == target_date:
+                    day_records.append(rec)
+                    
+        if day_records:
+            # 有当天登记的工时日志，按登记人分配工时
+            for rec in day_records:
+                owner_name = rec.get("owner", {}).get("name") or rec.get("creator", {}).get("name") or "未指派"
+                hours = float(rec.get("actualTime", 0.0))
+                total_hours += hours
+                
+                if owner_name not in grouped_items:
+                    grouped_items[owner_name] = []
+                    
+                existing = None
+                for existing_item in grouped_items[owner_name]:
+                    if existing_item["id"] == item_id:
+                        existing = existing_item
+                        break
+                if existing:
+                    existing["hours"] += hours
+                else:
+                    grouped_items[owner_name].append({
+                        "subject": subject,
+                        "status": status_name,
+                        "hours": hours,
+                        "category_zh": category_zh,
+                        "id": item_id
+                    })
+        else:
+            # 没有当天登记的工时日志，则归属于任务的当前指派人，工时为 0h
+            assigned_to = item.get("assignedTo")
+            assignee_name = assigned_to.get("name") if isinstance(assigned_to, dict) else "未指派"
+            if not assignee_name:
+                assignee_name = "未指派"
+                
+            if assignee_name not in grouped_items:
+                grouped_items[assignee_name] = []
+                
+            existing = None
+            for existing_item in grouped_items[assignee_name]:
+                if existing_item["id"] == item_id:
+                    existing = existing_item
+                    break
+            if not existing:
+                grouped_items[assignee_name].append({
+                    "subject": subject,
+                    "status": status_name,
+                    "hours": 0.0,
+                    "category_zh": category_zh,
+                    "id": item_id
+                })
+                
+    print(f"🔍 筛选出目标日期 ({target_date.strftime('%Y-%m-%d')}) 活跃工作项共 {len(active_items)} 个，登记总工时: {total_hours}h")
+    
+    # 5. 生成日报 Markdown 内容
     markdown_content = build_markdown_report(grouped_items, target_date)
     
-    # 4. 模拟推送至钉钉群
+    # 6. 推送至钉钉群
     send_to_dingtalk(markdown_content)
 
 if __name__ == "__main__":

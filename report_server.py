@@ -41,29 +41,29 @@ category_map = {
     'Bug': '缺陷'
 }
 
-def is_modified_on_date(gmt_modified, target_date):
-    """判断修改时间是否为目标日期 (target_date 为 datetime.date 对象)"""
-    if not gmt_modified:
+def is_timestamp_on_date(timestamp_val, target_date):
+    """判断给定的时间戳或日期字符串是否为指定日期"""
+    if not timestamp_val:
         return False
     
     # 如果是毫秒时间戳
-    if isinstance(gmt_modified, (int, float)):
-        ts = gmt_modified / 1000.0
-    elif isinstance(gmt_modified, str) and gmt_modified.isdigit():
-        ts = int(gmt_modified) / 1000.0
+    if isinstance(timestamp_val, (int, float)):
+        ts = timestamp_val / 1000.0
+    elif isinstance(timestamp_val, str) and timestamp_val.isdigit():
+        ts = int(timestamp_val) / 1000.0
     else:
         # 如果是 ISO-8601 字符串
         try:
-            clean_str = gmt_modified.replace('T', ' ').replace('Z', '')
+            clean_str = timestamp_val.replace('T', ' ').replace('Z', '')
             if '.' in clean_str:
                 clean_str = clean_str.split('.')[0]
             dt = datetime.datetime.strptime(clean_str.strip(), "%Y-%m-%d %H:%M:%S")
-            if 'Z' in gmt_modified:
+            if 'Z' in timestamp_val:
                 # UTC 转东八区
                 dt = dt + datetime.timedelta(hours=8)
             return dt.date() == target_date
         except Exception as e:
-            print(f"⚠️ 解析日期格式失败: {gmt_modified}, 错误: {e}")
+            print(f"⚠️ 解析日期格式失败: {timestamp_val}, 错误: {e}")
             return False
             
     try:
@@ -73,6 +73,14 @@ def is_modified_on_date(gmt_modified, target_date):
     except Exception as e:
         print(f"⚠️ 转换时间戳失败: {ts}, 错误: {e}")
         return False
+
+def is_modified_on_date(gmt_modified, target_date):
+    """判断修改时间是否为目标日期 (target_date 为 datetime.date 对象)"""
+    return is_timestamp_on_date(gmt_modified, target_date)
+
+def is_status_updated_on_date(item, target_date):
+    """判断状态更新时间是否为目标日期"""
+    return is_timestamp_on_date(item.get("updateStatusAt"), target_date)
 
 def parse_date_string(date_str):
     """解析日期字符串为 date 对象"""
@@ -119,9 +127,9 @@ def is_active_on_date(item, target_date):
     else:
         status_name = str(status_val)
         
-    # 如果已完成，我们只在当天修改/完成时展示它，避免展示以前完成的历史任务
+    # 如果已完成，我们只在状态更新时间为目标日期时展示它，避免展示以前完成的历史任务
     if status_name == "已完成":
-        return is_modified_on_date(item.get("gmtModified"), target_date)
+        return is_status_updated_on_date(item, target_date)
         
     # 如果是待处理或处理中，使用计划时间判断
     if start_date or end_date:

@@ -13,7 +13,70 @@ import urllib.parse
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import requests
+import socket
+import subprocess
 from dotenv import load_dotenv
+
+# DNS解析修复补丁：应对某些网络环境下 openapi-rdc.aliyuncs.com 域名解析失败的问题
+_original_getaddrinfo = socket.getaddrinfo
+_resolved_ips_cache = {}
+_FALLBACK_IPS = [
+    "118.178.223.77",
+    "47.111.202.119",
+    "118.178.223.76",
+    "118.178.223.82",
+    "118.178.223.120",
+    "118.178.223.119",
+    "47.111.202.125",
+    "47.111.202.85"
+]
+
+def _custom_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if host == 'openapi-rdc.aliyuncs.com':
+        # Tier 1: Try system DNS first
+        try:
+            addr_list = _original_getaddrinfo(host, port, family, type, proto, flags)
+            if addr_list:
+                return addr_list
+        except Exception:
+            pass
+
+        # Tier 2: Try public DNS via nslookup
+        if host not in _resolved_ips_cache:
+            for dns in ["223.6.6.6", "114.114.114.114"]:
+                try:
+                    res = subprocess.run(
+                        ["nslookup", host, dns],
+                        capture_output=True,
+                        text=True,
+                        timeout=3
+                    )
+                    if res.returncode == 0:
+                        ips = []
+                        for line in res.stdout.splitlines():
+                            line = line.strip()
+                            if "Address:" in line and "#" not in line:
+                                parts = line.split("Address:")
+                                if len(parts) > 1:
+                                    ip = parts[1].strip()
+                                    if ip != dns:
+                                        ips.append(ip)
+                        if ips:
+                            _resolved_ips_cache[host] = ips[0]
+                            break
+                except Exception:
+                    pass
+
+        # Tier 3: Use hardcoded stable IPs
+        if host not in _resolved_ips_cache:
+            _resolved_ips_cache[host] = _FALLBACK_IPS[0]
+
+        if host in _resolved_ips_cache:
+            return _original_getaddrinfo(_resolved_ips_cache[host], port, family, type, proto, flags)
+
+    return _original_getaddrinfo(host, port, family, type, proto, flags)
+
+socket.getaddrinfo = _custom_getaddrinfo
 
 # 加载环境变量配置文件
 load_dotenv()
@@ -187,7 +250,7 @@ def fetch_work_items():
     if not config_ok:
         raise ValueError("缺少云效配置环境变量，请检查 .env 文件。")
         
-    url = f"https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/{YUNXIAO_ORG_ID}/workitems:search"
+    url = f"https://openapi-rdc.aliyuncs.com/oapi/v1/projex/organizations/{YUNXIAO_ORG_ID}/workitems:search?perPage=200"
     headers = {
         "x-yunxiao-token": YUNXIAO_PAT,
         "Content-Type": "application/json"

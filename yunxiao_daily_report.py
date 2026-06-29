@@ -424,14 +424,53 @@ def send_to_dingtalk(text_content):
 
 
 
+def is_china_workday(target_date):
+    """判断是否为中国的工作日（包含调休补班，排除节假日和周末）"""
+    # 1. 优先尝试使用公共节假日 API (timor.tech)
+    date_str = target_date.strftime("%Y-%m-%d")
+    url = f"https://timor.tech/api/holiday/info/{date_str}"
+    try:
+        res = requests.get(url, timeout=5, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("code") == 0:
+                type_data = data.get("type", {})
+                type_val = type_data.get("type")
+                # 0: 工作日, 3: 调休 (属于补班工作日)
+                if type_val == 0 or type_val == 3:
+                    return True
+                else:
+                    return False
+    except Exception as e:
+        print(f"⚠️ 调用节假日 API 失败: {e}，将降级使用标准周末规则进行判断。")
+        
+    # 2. 降级方案：以标准周末（周六、周日）进行简单排除
+    is_weekend = target_date.weekday() >= 5
+    return not is_weekend
+
 def main():
     target_date = local_today
+    is_manual = False
+    
     if len(sys.argv) > 1:
+        is_manual = True
         try:
             target_date = datetime.datetime.strptime(sys.argv[1], "%Y-%m-%d").date()
             print(f"📌 使用命令行参数指定的日期: {target_date.strftime('%Y-%m-%d')}")
         except Exception:
             print(f"⚠️ 无效的日期参数: {sys.argv[1]}，将默认使用今日日期: {local_today.strftime('%Y-%m-%d')}")
+            
+    # 校验工作日：定时任务触发（或非手动指定日期的后台调度）时，自动跳过节假日/周末
+    event_name = os.getenv("GITHUB_EVENT_NAME", "")
+    is_schedule = (event_name == "schedule")
+    is_github_manual = (event_name != "" and not is_schedule)
+    
+    if not is_manual and not is_github_manual:
+        print("🔍 正在进行工作日属性校验...")
+        if not is_china_workday(target_date):
+            print(f"😴 目标日期 {target_date.strftime('%Y-%m-%d')} 为法定节假日或双休日，跳过日报生成与推送。")
+            return
+        print("📅 校验通过：今天是工作日/补班日，开始执行日报统计。")
             
     print(f"⏰ 开始执行日报统计任务, 目标日期: {target_date.strftime('%Y-%m-%d')}")
     
